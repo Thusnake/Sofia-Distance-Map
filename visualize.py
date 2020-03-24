@@ -40,9 +40,9 @@ def distance_to_color(distance):
 def extract_array(list_of_points, direction):
   global distance
   if direction == 'from':
-    return np.average(distance[list_of_points, :], axis=0)
+    return np.max(distance[list_of_points, :], axis=0)
   else:
-    return np.average(distance[:, list_of_points], axis=1)
+    return np.max(distance[:, list_of_points], axis=1)
 
 def compute_heatmap(array):
   global CELLS_X, CELLS_Y, heatmap
