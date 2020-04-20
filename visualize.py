@@ -8,8 +8,8 @@ WINDOW_WIDTH = 970
 WINDOW_HEIGHT = 896
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-x', required=True, type=int, dest='x', default=0)
-parser.add_argument('-y', required=True, type=int, dest='y', default=0)
+parser.add_argument('-x', required=False, type=int, dest='x', default=0)
+parser.add_argument('-y', required=False, type=int, dest='y', default=0)
 parser.add_argument('-d', '--direction', default='to', choices=['to', 'from'], dest='direction')
 parser.add_argument('--width', required=True, type=int, dest='width')
 parser.add_argument('--height', required=True, type=int, dest='height')
@@ -52,7 +52,7 @@ def compute_heatmap(array):
     for y in range(CELLS_Y):
       heatmap[y, x, :] = distance_to_color(array[x + (CELLS_Y - y - 1)*CELLS_X])
 
-  heatmap = cv2.resize(heatmap, (WINDOW_WIDTH, WINDOW_HEIGHT), interpolation=cv2.INTER_NEAREST)
+  heatmap = cv2.resize(heatmap, (WINDOW_WIDTH, WINDOW_HEIGHT), interpolation=cv2.INTER_LINEAR)
   sofia = cv2.imread('sofia.jpg', flags=cv2.IMREAD_COLOR)
   heatmap = cv2.addWeighted(heatmap, 0.5, np.array(sofia, dtype=float)/255, 0.5, 0)
 
