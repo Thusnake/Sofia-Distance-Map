@@ -54,6 +54,7 @@ DEGREE_OF_LON_IN_KM = 111
 
 CELL_WIDTH = COVER_LAT / args.width * DEGREE_OF_LAT_IN_KM
 CELL_HEIGHT = COVER_LON / args.height * DEGREE_OF_LON_IN_KM
+DIAGONAL_LEN = math.sqrt(CELL_WIDTH ** 2 + CELL_HEIGHT ** 2)
 
 WALKING_SPEED_KMH = 4.5
 
@@ -67,6 +68,16 @@ for x in range(args.width):
       graph.add_edge(cell_to_node(x, y), cell_to_node(x, y-1), weight = CELL_HEIGHT / WALKING_SPEED_KMH * 60)
     if y < args.height-1:
       graph.add_edge(cell_to_node(x, y), cell_to_node(x, y+1), weight = CELL_HEIGHT / WALKING_SPEED_KMH * 60)
+
+    # Diagonals.
+    if x > 0 and y > 0:
+      graph.add_edge(cell_to_node(x, y), cell_to_node(x-1, y-1), weight = DIAGONAL_LEN / WALKING_SPEED_KMH * 60)
+    if x > 0 and y < args.height-1:
+      graph.add_edge(cell_to_node(x, y), cell_to_node(x-1, y+1), weight = DIAGONAL_LEN / WALKING_SPEED_KMH * 60)
+    if x < args.width-1 and y > 0:
+      graph.add_edge(cell_to_node(x, y), cell_to_node(x+1, y-1), weight = DIAGONAL_LEN / WALKING_SPEED_KMH * 60)
+    if x < args.width-1 and y < args.height-1:
+      graph.add_edge(cell_to_node(x, y), cell_to_node(x+1, y+1), weight = DIAGONAL_LEN / WALKING_SPEED_KMH * 60)
 
 print('Walking distance done...')
 
