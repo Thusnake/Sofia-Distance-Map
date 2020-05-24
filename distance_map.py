@@ -22,6 +22,7 @@ class DistanceMap(widgets.QGraphicsView):
     self.hor_pixels = hor_pixels
     self.ver_pixels = ver_pixels
     
+    self.curr_distances = None
     self.onMouseClickHandler: function = None
     
     self._scene = widgets.QGraphicsScene(self)
@@ -42,6 +43,7 @@ class DistanceMap(widgets.QGraphicsView):
     Updates the heat colors of the distance map according to a two-dimensional 
     numpy array.
     """
+    self.curr_distances = distances
     
     img = QImage(self.hor_pixels, self.ver_pixels, QImage.Format_RGBA8888)
     for x in range(self.hor_pixels):
@@ -51,6 +53,14 @@ class DistanceMap(widgets.QGraphicsView):
     pixmap: QPixmap = QPixmap.fromImage(img)
     pixmap = pixmap.scaled(self.map_image.pixmap().width(), self.map_image.pixmap().height())
     self.heat_image.setPixmap(pixmap)
+    
+  def setMinHeat(self, new_min_heat):
+    self.min_heat = new_min_heat
+    self.updateDistances(self.curr_distances)
+  
+  def setMaxHeat(self, new_max_heat):
+    self.max_heat = new_max_heat
+    self.updateDistances(self.curr_distances)
     
   def distance_to_color(self, distance) -> QColor:
     """
@@ -92,10 +102,29 @@ class App(widgets.QApplication):
     
     # On the left - Distance map and heat adjustment controls
     self.left_layout = widgets.QVBoxLayout()
+    
     self.dist_map_widget = DistanceMap(None, HOR_PIXELS, VER_PIXELS)
     self.dist_map_widget.setMouseClickHandler(self.onDistMapWidgetClicked)
-    
     self.left_layout.addWidget(self.dist_map_widget)
+    
+    self.min_heat_slider = widgets.QSlider(QtCore.Qt.Horizontal)
+    self.min_heat_slider.setMinimum(0)
+    self.min_heat_slider.setMaximum(120)
+    self.min_heat_slider.setValue(0)
+    self.min_heat_slider.setTickPosition(widgets.QSlider.TicksBelow)
+    self.min_heat_slider.setTickInterval(1)
+    self.min_heat_slider.valueChanged.connect(self.onMinHeatChanged)
+    self.left_layout.addWidget(self.min_heat_slider)
+    
+    self.max_heat_slider = widgets.QSlider(QtCore.Qt.Horizontal)
+    self.max_heat_slider.setMinimum(0)
+    self.max_heat_slider.setMaximum(120)
+    self.max_heat_slider.setValue(60)
+    self.max_heat_slider.setTickPosition(widgets.QSlider.TicksBelow)
+    self.max_heat_slider.setTickInterval(1)
+    self.max_heat_slider.valueChanged.connect(self.onMaxHeatChanged)
+    self.left_layout.addWidget(self.max_heat_slider)
+    
     self.layout.addLayout(self.left_layout)
     
     # On the right - Region selection
@@ -118,6 +147,14 @@ class App(widgets.QApplication):
   def onDistanceMapLoaded(self, result):
     self.distance_map_raw = result
     print("Loaded!")
+    
+  def onMinHeatChanged(self, value):
+    self.dist_map_widget.setMinHeat(value)
+    self.max_heat_slider.setMinimum(value)
+    
+  def onMaxHeatChanged(self, value):
+    self.dist_map_widget.setMaxHeat(value)
+    self.min_heat_slider.setMaximum(value)
     
   def onDistMapWidgetClicked(self, pos: QMouseEvent):
     if pos.x() < 0 or pos.x() > self.dist_map_widget.scene().width()\
