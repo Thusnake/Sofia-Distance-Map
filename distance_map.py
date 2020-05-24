@@ -4,7 +4,7 @@ import numpy as np
 import threading
 from typing import List, Callable
 from PyQt5 import QtWidgets as widgets
-from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QMouseEvent
+from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QMouseEvent, QPen
 from PyQt5 import QtCore
 
 class DistanceMap(widgets.QGraphicsView):
@@ -31,10 +31,16 @@ class DistanceMap(widgets.QGraphicsView):
     
     map_pixmap = QPixmap('sofia.jpg')
     self.map_image = self._scene.addPixmap(map_pixmap)
+    self._scene.setSceneRect(0, 0, map_pixmap.width(), map_pixmap.height())
     
     heat_pixmap = QPixmap(self.map_image.pixmap().width(), self.map_image.pixmap().height())
     heat_pixmap.fill(QtCore.Qt.red)
-    self.heat_image = self._scene.addPixmap(heat_pixmap)
+    self.heat_image: widgets.QGraphicsPixmapItem = self._scene.addPixmap(heat_pixmap)
+    self.heat_image.setAcceptHoverEvents(True)
+    
+    hover_rect_pen = QPen(QtCore.Qt.white, 2)
+    self.hover_rect: widgets.QGraphicsRectItem = self._scene.addRect(0, 0, 0, 0, pen=hover_rect_pen)
+    self.hover_rect.setVisible(False)
     
     self.show()
     
@@ -55,10 +61,12 @@ class DistanceMap(widgets.QGraphicsView):
     self.heat_image.setPixmap(pixmap)
     
   def setMinHeat(self, new_min_heat):
+    print(new_min_heat)
     self.min_heat = new_min_heat
     self.updateDistances(self.curr_distances)
   
   def setMaxHeat(self, new_max_heat):
+    print(new_max_heat)
     self.max_heat = new_max_heat
     self.updateDistances(self.curr_distances)
     
@@ -77,17 +85,38 @@ class DistanceMap(widgets.QGraphicsView):
     )
     return out
   
+  def windowToSquareX(self, x: float) -> int:
+    return int(x / self._scene.width() * self.hor_pixels)
+  
+  def windowToSquareY(self, y: float) -> int:
+    return int(y / self._scene.height() * self.ver_pixels)
+  
+  def windowToSquareYInv(self, y: float) -> int:
+    return int((self._scene.height() - y) / self._scene.height() * self.ver_pixels)
+  
   def eventFilter(self, source, event):
-    if (source is self._scene and
-        event.type() == QtCore.QEvent.GraphicsSceneMouseRelease and
-        event.button() == QtCore.Qt.LeftButton):
-      pos = event.scenePos()
-      print('x=%0.01f,y=%0.01f' % (pos.x(), pos.y()))
-      self.onMouseClickHandler(pos)
+    if source is self._scene:
+      if event.type() == QtCore.QEvent.GraphicsSceneMouseRelease and\
+         event.button() == QtCore.Qt.LeftButton:
+        self.onMouseClickHandler(event.scenePos())
+      elif event.type() == QtCore.QEvent.GraphicsSceneMouseMove:
+        self.onMouseHover(event.scenePos())
     return widgets.QWidget.eventFilter(self, source, event)
   
   def setMouseClickHandler(self, call: Callable[[QMouseEvent], None]):
     self.onMouseClickHandler = call
+    
+  def onMouseHover(self, pos: QMouseEvent):
+    if pos.x() < 0 or pos.x() >= self._scene.width() or pos.y() < 0 or pos.y() >= self._scene.height():
+      return
+    
+    self.hover_rect.setVisible(True)
+    self.hover_rect.setRect(
+      self.windowToSquareX(pos.x()) * self._scene.width() / self.hor_pixels,
+      self.windowToSquareY(pos.y()) * self._scene.height() / self.ver_pixels,
+      self._scene.width() / self.hor_pixels,
+      self._scene.height() / self.ver_pixels
+    )
     
 class App(widgets.QApplication):
   def __init__(self):
@@ -161,8 +190,8 @@ class App(widgets.QApplication):
        or pos.y() < 0 or pos.y() > self.dist_map_widget.scene().height():
       return
   
-    box_clicked_x = int(pos.x() / self.dist_map_widget.scene().width() * self.dist_map_widget.hor_pixels)
-    box_clicked_y = int((self.dist_map_widget.scene().height() - pos.y()) / self.dist_map_widget.scene().height() * self.dist_map_widget.ver_pixels)
+    box_clicked_x = self.dist_map_widget.windowToSquareX(pos.x())
+    box_clicked_y = self.dist_map_widget.windowToSquareYInv(pos.y())
     
     new_origin = int(box_clicked_x + box_clicked_y * self.dist_map_widget.hor_pixels)
     print(new_origin)
