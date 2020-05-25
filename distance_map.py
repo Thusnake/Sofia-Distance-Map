@@ -2,10 +2,16 @@ import sys
 import colorsys
 import numpy as np
 import threading
-from typing import List, Callable
+from collections import defaultdict
+from json import JSONDecoder
+from typing import List, Callable, Dict, DefaultDict
+from nptyping import Array
 from PyQt5 import QtWidgets as widgets
-from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QMouseEvent, QPen
+from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QMouseEvent, QPen, QBrush, QFont
 from PyQt5 import QtCore
+
+HOR_PIXELS, VER_PIXELS = 100, 100
+HOVER_TEXTBOX_PADDING = 5
 
 class DistanceMap(widgets.QGraphicsView):
   """
@@ -23,7 +29,8 @@ class DistanceMap(widgets.QGraphicsView):
     self.ver_pixels = ver_pixels
     
     self.curr_distances = None
-    self.onMouseClickHandler: function = None
+    self.onMouseClickHandler: Callable[[QMouseEvent], None] = None
+    self.hoverTextHandler: Callable[[int, int], str] = None
     
     self._scene = widgets.QGraphicsScene(self)
     self.setScene(self._scene)
@@ -41,6 +48,14 @@ class DistanceMap(widgets.QGraphicsView):
     hover_rect_pen = QPen(QtCore.Qt.white, 2)
     self.hover_rect: widgets.QGraphicsRectItem = self._scene.addRect(0, 0, 0, 0, pen=hover_rect_pen)
     self.hover_rect.setVisible(False)
+    
+    self.hover_text: widgets.QGraphicsSimpleTextItem = self._scene.addSimpleText('')
+    self.hover_text.setVisible(False)
+    self.hover_text.setBrush(QBrush(QtCore.Qt.white))
+    self.hover_text.setZValue(1000)
+    
+    self.hover_text_bg: widgets.QGraphicsRectItem = self._scene.addRect(0, 0, 0, 0, brush=QBrush(QtCore.Qt.black))
+    self.hover_text_bg.setVisible(False)
     
     self.show()
     
@@ -92,7 +107,7 @@ class DistanceMap(widgets.QGraphicsView):
     return int(y / self._scene.height() * self.ver_pixels)
   
   def windowToSquareYInv(self, y: float) -> int:
-    return int((self._scene.height() - y) / self._scene.height() * self.ver_pixels)
+    return int((self._scene.height() - y - 1) / self._scene.height() * self.ver_pixels)
   
   def eventFilter(self, source, event):
     if source is self._scene:
@@ -105,6 +120,9 @@ class DistanceMap(widgets.QGraphicsView):
   
   def setMouseClickHandler(self, call: Callable[[QMouseEvent], None]):
     self.onMouseClickHandler = call
+  
+  def setHoverTextHandler(self, call: Callable[[int, int], None]):
+    self.hoverTextHandler = call
     
   def onMouseHover(self, pos: QMouseEvent):
     if pos.x() < 0 or pos.x() >= self._scene.width() or pos.y() < 0 or pos.y() >= self._scene.height():
@@ -118,11 +136,47 @@ class DistanceMap(widgets.QGraphicsView):
       self._scene.height() / self.ver_pixels
     )
     
+    self.hover_text.setVisible(True)
+    self.hover_text.setText(self.hoverTextHandler(
+      self.windowToSquareX(pos.x()),
+      self.windowToSquareYInv(pos.y())
+    ))
+    
+    x_square_offset = 1 if pos.x() <= self._scene.width() // 2 else 0
+    x_offset = -self.hover_text.boundingRect().width() if pos.x() > self._scene.width() // 2 else 0
+    y_offset = -self.hover_text.boundingRect().height() if pos.y() > self._scene.height() // 2 else 0
+    self.hover_text.setPos(
+      (self.windowToSquareX(pos.x()) + x_square_offset) * self._scene.width() / self.hor_pixels + x_offset,
+      self.windowToSquareY(pos.y()) * self._scene.height() / self.ver_pixels + y_offset
+    )
+    
+    self.hover_text_bg.setVisible(True)
+    self.hover_text_bg.setRect(
+      self.hover_text.x() - HOVER_TEXTBOX_PADDING,
+      self.hover_text.y() - HOVER_TEXTBOX_PADDING,
+      self.hover_text.boundingRect().width() + HOVER_TEXTBOX_PADDING * 2,
+      self.hover_text.boundingRect().height() + HOVER_TEXTBOX_PADDING * 2
+    )
+    
+    self.hover_text_bg.setOpacity(0.5)
+
+class NumericTableWidgetItem(widgets.QTableWidgetItem):
+  def __init__(self, value: int):
+    super().__init__(str(value))
+  
+  def __lt__(self, other):
+    if isinstance(other, widgets.QTableWidgetItem):
+      try:
+        return float(self.data(QtCore.Qt.EditRole)) < float(other.data(QtCore.Qt.EditRole))
+      except ValueError as e:
+        print('Could not compare table item values')
+        print(e)
+    
+    return super(NumericTableWidgetItem, self).__lt__(other)
+
 class App(widgets.QApplication):
   def __init__(self):
     super().__init__(sys.argv)
-    
-    HOR_PIXELS, VER_PIXELS = 100, 100
     
     self.setStyle('Fusion')
     
@@ -170,12 +224,48 @@ class App(widgets.QApplication):
       daemon=True
     ).start()
     
+    # Load squares area affiliation.
+    self.square_affiliation: Dict[int, List[str]] = {}
+    self.regions_to_squares: DefaultDict[str, List[int]] = defaultdict(lambda: [])
+    self.fetchSquareInfo()
+    self.dist_map_widget.setHoverTextHandler(self.squareInfoToString)
+    
+    self.region_table_widget = widgets.QTableWidget(len(self.regions_to_squares.keys()), 3)
+    for i, region in enumerate(self.regions_to_squares.keys()):
+      self.region_table_widget.setItem(i, 0, widgets.QTableWidgetItem(region))
+      self.region_table_widget.setItem(i, 1, NumericTableWidgetItem(0))
+      self.region_table_widget.setItem(i, 2, NumericTableWidgetItem(0))
+    self.region_table_widget.setSortingEnabled(True)
+    self.right_layout.addWidget(self.region_table_widget)
+    
     self.direction = 'to'
     self.origins = []
     
   def onDistanceMapLoaded(self, result):
     self.distance_map_raw = result
     print("Loaded!")
+  
+  def fetchSquareInfo(self):
+    """
+    Load all the prefetched information about the squares' regional affiliation.
+    """
+    
+    with open('square_info.json', 'r') as file:
+      decoder = JSONDecoder()
+      square_info_json = decoder.decode(file.read())
+      for square_number, info in square_info_json.items():
+        if info == None:
+          self.square_affiliation[int(square_number)] = []
+          continue
+        
+        self.square_affiliation[int(square_number)] = [value for key, value in info.items()]
+        for key, value in info.items():
+          self.regions_to_squares[value].append(int(square_number))
+  
+  def squareInfoToString(self, x: int, y: int) -> str:
+    if self.square_affiliation == None:
+      return ''
+    return '\n'.join(self.square_affiliation[x + y * HOR_PIXELS])
     
   def onMinHeatChanged(self, value):
     self.dist_map_widget.setMinHeat(value)
@@ -200,9 +290,28 @@ class App(widgets.QApplication):
   def setOrigins(self, origins: List[int]):
     self.origins = origins
     if self.direction == 'from':
-      self.dist_map_widget.updateDistances(np.max(self.distance_map_raw[self.origins, :], axis=0))
+      distances = np.max(self.distance_map_raw[self.origins, :], axis=0)
     else:
-      self.dist_map_widget.updateDistances(np.max(self.distance_map_raw[:, self.origins], axis=1))
+      distances = np.max(self.distance_map_raw[:, self.origins], axis=1)
+    
+    self.dist_map_widget.updateDistances(distances)
+    
+    for i, (region, squares) in enumerate(self.regions_to_squares.items()):
+      self.region_table_widget.item(i, 0).setText(region)
+      self.region_table_widget.item(i, 1).setText(str(np.average(distances[squares])))
+      self.region_table_widget.item(i, 2).setText(str(np.median(distances[squares])))
+      
+  def invertSquareNumber(self, sq_number: int) -> int:
+    """
+    Returns the vertically-mirrored square number.
+    
+    This is done by transforming the square number into x and y coordinates,
+    flipping the y coordinate and transforming the new pair into a square number.
+    """
+    
+    x, y = sq_number % HOR_PIXELS, sq_number // HOR_PIXELS
+    y = VER_PIXELS - y - 1
+    return x + y * HOR_PIXELS
 
 if __name__ == '__main__':
   app = App()
