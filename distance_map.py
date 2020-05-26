@@ -359,11 +359,12 @@ class App(widgets.QApplication):
       distances = np.max(self.distance_map_raw[:, self.origins], axis=1)
     
     self.dist_map_widget.updateDistances(distances)
-    
-    for i, (region, squares) in enumerate(self.regions_to_squares.items()):
-      self.region_table_widget.item(i, 0).setText(region)
-      self.region_table_widget.item(i, 1).setText('%.2f' % np.average(distances[squares]))
-      self.region_table_widget.item(i, 2).setText('%.2f' % np.median(distances[squares]))
+      
+    for row in range(self.region_table_widget.rowCount()):
+      region_name = self.region_table_widget.item(row, 0).text()
+      distances_to_region = distances[self.regions_to_squares[region_name]]
+      self.region_table_widget.item(row, 1).setText('%.2f' % np.average(distances_to_region))
+      self.region_table_widget.item(row, 2).setText('%.2f' % np.median(distances_to_region))
       
   def onDistrictRowHover(self, row: int):
     district_name = self.region_table_widget.item(row, 0).text()
