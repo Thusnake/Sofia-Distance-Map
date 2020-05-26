@@ -181,8 +181,8 @@ class DistanceMap(widgets.QGraphicsView):
       sq_y = self.ver_pixels - sq_y - 1 # Invert Y.
       window_x, window_y = sq_x * square_width, sq_y * square_height
       
-      for x in range(int(window_x), int(window_x + square_width + 1)):
-        for y in range(int(window_y), int(window_y + square_height + 1)):
+      for x in range(int(window_x), min(int(window_x + square_width + 1), new_shadow_mask.width())):
+        for y in range(int(window_y), min(int(window_y + square_height + 1), new_shadow_mask.height())):
           new_shadow_mask.setPixelColor(x, y, QtCore.Qt.transparent)
       
     self.shadow_mask.setPixmap(QPixmap.fromImage(new_shadow_mask))
