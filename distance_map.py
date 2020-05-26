@@ -18,6 +18,11 @@ class DistanceMap(widgets.QGraphicsView):
   Represents the heatmap of temporal distances.
   """
   
+  originsUpdated = QtCore.pyqtSignal(set)
+  
+  shift_down = False
+  curr_origins: Set[int] = set()
+  
   def __init__(self, parent, hor_pixels: int, ver_pixels: int):
     super(DistanceMap, self).__init__(parent)
     
@@ -115,17 +120,36 @@ class DistanceMap(widgets.QGraphicsView):
   def windowToSquareYInv(self, y: float) -> int:
     return int((self._scene.height() - y - 1) / self._scene.height() * self.ver_pixels)
   
-  def eventFilter(self, source, event):
+  def eventFilter(self, source, event: QtCore.QEvent):
     if source is self._scene:
       if event.type() == QtCore.QEvent.GraphicsSceneMouseRelease and\
-         event.button() == QtCore.Qt.LeftButton:
-        self.onMouseClickHandler(event.scenePos())
+         event.button() == QtCore.Qt.LeftButton and\
+         event.scenePos().x() >= 0 and event.scenePos().x() < self._scene.width() and\
+         event.scenePos().y() >= 0 and event.scenePos().y() < self._scene.height():
+      
+        pos = event.scenePos()
+        box_clicked_x = self.windowToSquareX(pos.x())
+        box_clicked_y = self.windowToSquareYInv(pos.y())
+        new_origin = int(box_clicked_x + box_clicked_y * self.hor_pixels)
+        
+        if not self.shift_down:
+          self.curr_origins.clear()
+
+        self.curr_origins.add(new_origin)
+        print(self.curr_origins)
+        self.originsUpdated.emit(self.curr_origins)
+        
       elif event.type() == QtCore.QEvent.GraphicsSceneMouseMove:
         self.onMouseHover(event.scenePos())
+        
+      elif event.type() == QtCore.QEvent.KeyPress:
+        if event.key() == QtCore.Qt.Key_Shift:
+          self.shift_down = True
+          
+      elif event.type() == QtCore.QEvent.KeyRelease:
+        if event.key() == QtCore.Qt.Key_Shift:
+          self.shift_down = False
     return widgets.QWidget.eventFilter(self, source, event)
-  
-  def setMouseClickHandler(self, call: Callable[[QMouseEvent], None]):
-    self.onMouseClickHandler = call
   
   def setHoverTextHandler(self, call: Callable[[int, int], None]):
     self.hoverTextHandler = call
@@ -250,7 +274,7 @@ class App(widgets.QApplication):
     self.left_layout = widgets.QVBoxLayout()
     
     self.dist_map_widget = DistanceMap(None, HOR_PIXELS, VER_PIXELS)
-    self.dist_map_widget.setMouseClickHandler(self.onDistMapWidgetClicked)
+    self.dist_map_widget.originsUpdated.connect(self.setOrigins)
     self.left_layout.addWidget(self.dist_map_widget)
     
     self.min_heat_slider = widgets.QSlider(QtCore.Qt.Horizontal)
@@ -338,21 +362,9 @@ class App(widgets.QApplication):
   def onMaxHeatChanged(self, value):
     self.dist_map_widget.setMaxHeat(value)
     self.min_heat_slider.setMaximum(value)
-    
-  def onDistMapWidgetClicked(self, pos: QMouseEvent):
-    if pos.x() < 0 or pos.x() > self.dist_map_widget.scene().width()\
-       or pos.y() < 0 or pos.y() > self.dist_map_widget.scene().height():
-      return
   
-    box_clicked_x = self.dist_map_widget.windowToSquareX(pos.x())
-    box_clicked_y = self.dist_map_widget.windowToSquareYInv(pos.y())
-    
-    new_origin = int(box_clicked_x + box_clicked_y * self.dist_map_widget.hor_pixels)
-    print(new_origin)
-    self.setOrigins([new_origin])
-  
-  def setOrigins(self, origins: List[int]):
-    self.origins = origins
+  def setOrigins(self, origins: Set[int]):
+    self.origins = list(origins)
     if self.direction == 'from':
       distances = np.max(self.distance_map_raw[self.origins, :], axis=0)
     else:
