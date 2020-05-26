@@ -4,7 +4,7 @@ import numpy as np
 import threading
 from collections import defaultdict
 from json import JSONDecoder
-from typing import List, Callable, Dict, DefaultDict
+from typing import List, Callable, Dict, DefaultDict, Set
 from nptyping import Array
 from PyQt5 import QtWidgets as widgets
 from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QMouseEvent, QPen, QBrush, QFont
@@ -37,7 +37,7 @@ class DistanceMap(widgets.QGraphicsView):
     self._scene.installEventFilter(self)
     
     map_pixmap = QPixmap('sofia.jpg')
-    self.map_image = self._scene.addPixmap(map_pixmap)
+    self.map_image: widgets.QGraphicsPixmapItem = self._scene.addPixmap(map_pixmap)
     self._scene.setSceneRect(0, 0, map_pixmap.width(), map_pixmap.height())
     
     heat_pixmap = QPixmap(self.map_image.pixmap().width(), self.map_image.pixmap().height())
@@ -56,6 +56,12 @@ class DistanceMap(widgets.QGraphicsView):
     
     self.hover_text_bg: widgets.QGraphicsRectItem = self._scene.addRect(0, 0, 0, 0, brush=QBrush(QtCore.Qt.black))
     self.hover_text_bg.setVisible(False)
+    
+    shdw_mask = QPixmap(self.map_image.pixmap().width(), self.map_image.pixmap().height())
+    shdw_mask.fill(QtCore.Qt.black)
+    self.shadow_mask: widgets.QGraphicsPixmapItem = self._scene.addPixmap(shdw_mask)
+    self.shadow_mask.setOpacity(0.5)
+    self.shadow_mask.setVisible(False)
     
     self.show()
     
@@ -159,6 +165,63 @@ class DistanceMap(widgets.QGraphicsView):
     )
     
     self.hover_text_bg.setOpacity(0.5)
+    
+  def shadowMaskSquares(self, squares: List[int]):
+    """
+    Enables the shadow mask, highlighting only a given set of squares.
+    """
+    new_shadow_mask = QImage(self.map_image.pixmap().width(), self.map_image.pixmap().height(), QImage.Format_RGBA8888)
+    new_shadow_mask.fill(QtCore.Qt.black)
+    print('Shadow_mask size: %.2f, %.2f' % (new_shadow_mask.width(), new_shadow_mask.height()))
+    
+    square_width = self.map_image.boundingRect().width() / self.hor_pixels
+    square_height = self.map_image.boundingRect().height() / self.ver_pixels
+    for square_number in squares:
+      sq_x, sq_y = square_number % self.hor_pixels, square_number // self.hor_pixels
+      sq_y = self.ver_pixels - sq_y - 1 # Invert Y.
+      window_x, window_y = sq_x * square_width, sq_y * square_height
+      
+      for x in range(int(window_x), int(window_x + square_width + 1)):
+        for y in range(int(window_y), int(window_y + square_height + 1)):
+          new_shadow_mask.setPixelColor(x, y, QtCore.Qt.transparent)
+      
+    self.shadow_mask.setPixmap(QPixmap.fromImage(new_shadow_mask))
+    self.shadow_mask.setVisible(True)
+  
+  def clearShadowMask(self):
+    """
+    Removes the shadow mask.
+    """
+    self.shadow_mask.fill(QtCore.Qt.black)
+    self.shadow_mask.setVisible(False)
+
+class DistrictTableWidget(widgets.QTableWidget):
+  rowEntered = QtCore.pyqtSignal(int)
+  
+  def __init__(self, rows: int, cols: int, parent=None):
+    super().__init__(rows, cols, parent=parent)
+    self.viewport().installEventFilter(self)
+    self._last_index = QtCore.QPersistentModelIndex()
+  
+  def eventFilter(self, widget, event: QtCore.QEvent):
+    if widget is self.viewport():
+      index = self._last_index
+      if event.type() == QtCore.QEvent.MouseMove:
+        index = self.indexAt(event.pos())
+      elif event.type() == QtCore.QEvent.Leave:
+        index = QtCore.QModelIndex()
+      
+      if index != self._last_index:
+        row = index.row()
+        column = index.column()
+        item = self.item(row, column)
+        
+        if item is not None:
+          self.rowEntered.emit(row)
+
+        self._last_index = QtCore.QPersistentModelIndex(index)
+    
+    return super(DistrictTableWidget, self).eventFilter(widget, event)
 
 class NumericTableWidgetItem(widgets.QTableWidgetItem):
   def __init__(self, value: int):
@@ -225,17 +288,19 @@ class App(widgets.QApplication):
     ).start()
     
     # Load squares area affiliation.
-    self.square_affiliation: Dict[int, List[str]] = {}
+    self.square_affiliation: DefaultDict[int, Set[str]] = defaultdict(lambda: set())
     self.regions_to_squares: DefaultDict[str, List[int]] = defaultdict(lambda: [])
     self.fetchSquareInfo()
     self.dist_map_widget.setHoverTextHandler(self.squareInfoToString)
     
-    self.region_table_widget = widgets.QTableWidget(len(self.regions_to_squares.keys()), 3)
+    self.region_table_widget = DistrictTableWidget(len(self.regions_to_squares.keys()), 3)
     for i, region in enumerate(self.regions_to_squares.keys()):
       self.region_table_widget.setItem(i, 0, widgets.QTableWidgetItem(region))
       self.region_table_widget.setItem(i, 1, NumericTableWidgetItem(0))
       self.region_table_widget.setItem(i, 2, NumericTableWidgetItem(0))
     self.region_table_widget.setSortingEnabled(True)
+    self.region_table_widget.setMouseTracking(True)
+    self.region_table_widget.rowEntered.connect(self.onDistrictRowHover)
     self.right_layout.addWidget(self.region_table_widget)
     
     self.direction = 'to'
@@ -255,17 +320,16 @@ class App(widgets.QApplication):
       square_info_json = decoder.decode(file.read())
       for square_number, info in square_info_json.items():
         if info == None:
-          self.square_affiliation[int(square_number)] = []
           continue
         
-        self.square_affiliation[int(square_number)] = [value for key, value in info.items()]
+        self.square_affiliation[int(square_number)].update(value for key, value in info.items())
         for key, value in info.items():
           self.regions_to_squares[value].append(int(square_number))
   
   def squareInfoToString(self, x: int, y: int) -> str:
     if self.square_affiliation == None:
       return ''
-    return '\n'.join(self.square_affiliation[x + y * HOR_PIXELS])
+    return '\n'.join(list(self.square_affiliation[x + y * HOR_PIXELS]))
     
   def onMinHeatChanged(self, value):
     self.dist_map_widget.setMinHeat(value)
@@ -298,8 +362,13 @@ class App(widgets.QApplication):
     
     for i, (region, squares) in enumerate(self.regions_to_squares.items()):
       self.region_table_widget.item(i, 0).setText(region)
-      self.region_table_widget.item(i, 1).setText(str(np.average(distances[squares])))
-      self.region_table_widget.item(i, 2).setText(str(np.median(distances[squares])))
+      self.region_table_widget.item(i, 1).setText('%.2f' % np.average(distances[squares]))
+      self.region_table_widget.item(i, 2).setText('%.2f' % np.median(distances[squares]))
+      
+  def onDistrictRowHover(self, row: int):
+    district_name = self.region_table_widget.item(row, 0).text()
+    print('District %d hovered - %s' % (row, district_name))
+    self.dist_map_widget.shadowMaskSquares(self.regions_to_squares[district_name])
       
   def invertSquareNumber(self, sq_number: int) -> int:
     """
